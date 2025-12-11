@@ -11,14 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class FindProductUsersWorkflow:
-    def __init__(self, search_provider='google'):
+    def __init__(self):
         """
         Initialize the workflow.
-        
-        Args:
-            search_provider: Search provider to use ('google', 'duckduckgo', 'bing')
         """
-        self.web_search_agent = WebSearchAgent(search_provider=search_provider)
+        self.llm_providers = ['openai', 'gemini', 'grok']
         self.user_extraction_agent = UserExtractionAgent()
         self.product_service = ProductService()
         self.product_page_service = ProductPageService()
@@ -41,9 +38,9 @@ class FindProductUsersWorkflow:
         product, created = self.product_service.get_or_create(product_name)
         logger.info(f"Product: {product.name} ({'created' if created else 'existing'})")
         
-        # Step 1: Search for Reddit pages
-        logger.info("Step 1: Searching for Reddit pages...")
-        reddit_urls = self._search_reddit_pages(product_name, max_urls)
+        # Step 1: Search for Reddit pages using multiple LLMs
+        logger.info("Step 1: Searching for Reddit pages using multiple LLMs...")
+        reddit_urls = self._search_reddit_pages_all_llms(product_name, max_urls)
         
         if not reddit_urls:
             logger.warning(f"No Reddit URLs found for {product_name}")
@@ -56,7 +53,7 @@ class FindProductUsersWorkflow:
                 'message': 'No Reddit URLs found'
             }
         
-        logger.info(f"Found {len(reddit_urls)} Reddit URLs")
+        logger.info(f"Found {len(reddit_urls)} unique Reddit URLs across all LLMs")
         
         # Step 2: Scrape pages (async)
         logger.info("Step 2: Scraping Reddit pages...")
@@ -93,14 +90,55 @@ class FindProductUsersWorkflow:
             'message': f'Successfully processed {len(scraped_pages)} pages and extracted {total_users} users'
         }
 
-    def _search_reddit_pages(self, product_name, max_urls=20):
-        """Search for Reddit pages mentioning the product."""
-        try:
-            urls = self.web_search_agent.find_reddit_urls_sync(product_name, max_urls)
-            return urls
-        except Exception as e:
-            logger.error(f"Error searching for Reddit pages: {e}")
-            return []
+    def _search_reddit_pages_all_llms(self, product_name, max_urls=20):
+        """
+        Search for Reddit pages using all LLM providers and aggregate results.
+        
+        Args:
+            product_name: Name of the product to search for
+            max_urls: Maximum number of URLs per LLM provider
+            
+        Returns:
+            list of unique Reddit URLs
+        """
+        all_urls = set()
+        successful_providers = []
+        failed_providers = []
+        
+        for llm_provider in self.llm_providers:
+            try:
+                logger.info(f"Trying {llm_provider} for product: {product_name}")
+                web_search_agent = WebSearchAgent(llm_provider=llm_provider)
+                urls = web_search_agent.find_reddit_urls(product_name, max_urls)
+                
+                # Add URLs to the set (automatically handles duplicates)
+                for url in urls:
+                    all_urls.add(url)
+                
+                logger.info(f"{llm_provider} found {len(urls)} URLs (total unique: {len(all_urls)})")
+                successful_providers.append(llm_provider)
+                
+            except ValueError as e:
+                # Missing API key - skip this provider
+                logger.warning(f"Skipping {llm_provider}: {e}")
+                failed_providers.append(f"{llm_provider} (missing API key)")
+                continue
+            except ImportError as e:
+                # Package not installed - skip this provider
+                logger.warning(f"Skipping {llm_provider}: {e}")
+                failed_providers.append(f"{llm_provider} (package not installed)")
+                continue
+            except Exception as e:
+                logger.warning(f"Error using {llm_provider} to search for Reddit pages: {e}")
+                failed_providers.append(f"{llm_provider} (error: {str(e)[:50]})")
+                continue
+        
+        if successful_providers:
+            logger.info(f"Successfully used {len(successful_providers)} LLM provider(s): {', '.join(successful_providers)}")
+        if failed_providers:
+            logger.warning(f"Failed to use {len(failed_providers)} LLM provider(s): {', '.join(failed_providers)}")
+        
+        return list(all_urls)
 
     async def _scrape_single_page(self, product, url):
         """Scrape a single Reddit URL and return the ProductPage or None."""

@@ -123,7 +123,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# LLM API Keys
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '') or os.getenv('GOOGLE_API_KEY', '')
+GROK_API_KEY = os.getenv('GROK_API_KEY', '')
 
 # Scraping settings
 SCRAPER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'

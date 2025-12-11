@@ -17,34 +17,26 @@ class Command(BaseCommand):
             help='Product name to search for',
         )
         parser.add_argument(
-            '--search-provider',
-            type=str,
-            default='google',
-            choices=['google', 'duckduckgo', 'bing'],
-            help='Search provider to use (default: google)',
-        )
-        parser.add_argument(
             '--max-urls',
             type=int,
             default=20,
-            help='Maximum number of Reddit URLs to search for (default: 20)',
+            help='Maximum number of Reddit URLs per LLM provider to search for (default: 20)',
         )
 
     def handle(self, *args, **options):
         product_name = options['product']
-        search_provider = options.get('search_provider', 'google')
         max_urls = options.get('max_urls', 20)
         
         if not product_name:
             raise CommandError('Product name is required')
         
         self.stdout.write(self.style.SUCCESS(f'Starting workflow for product: {product_name}'))
-        self.stdout.write(f'Using search provider: {search_provider}')
-        self.stdout.write(f'Max URLs to search: {max_urls}')
+        self.stdout.write('Using LLM providers: OpenAI, Gemini, Grok')
+        self.stdout.write(f'Max URLs per LLM provider: {max_urls}')
         
         try:
             # Initialize workflow
-            workflow = FindProductUsersWorkflow(search_provider=search_provider)
+            workflow = FindProductUsersWorkflow()
             
             # Execute workflow
             result = workflow.execute(product_name, max_urls=max_urls)

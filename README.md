@@ -17,15 +17,14 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-3. Create a `.env` file in the project root with your API keys:
+3. Create a `.env` file in the project root with your LLM API keys:
 ```
 OPENAI_API_KEY=your_openai_api_key_here
-GOOGLE_API_KEY=your_google_api_key_here (optional, for Google search)
-GOOGLE_CSE_ID=your_google_cse_id_here (optional, for Google search)
-BING_API_KEY=your_bing_api_key_here (optional, for Bing search)
+GEMINI_API_KEY=your_gemini_api_key_here (or use GOOGLE_API_KEY)
+GROK_API_KEY=your_grok_api_key_here
 ```
 
-Note: The search client defaults to Google Custom Search. You can use DuckDuckGo without API keys, or configure Bing/Google with API keys.
+Note: The workflow will iterate through all 3 LLM providers (OpenAI, Gemini, Grok) to find Reddit URLs. At least one API key is required, but having all three will give better results.
 
 3. Run migrations:
 ```bash
@@ -52,15 +51,16 @@ python manage.py runserver
 python manage.py find_product_users --product "Product Name"
 ```
 
-You can also specify a search provider (default is 'google'):
+The workflow will automatically use all 3 LLM providers (OpenAI, Gemini, Grok) with web search to find Reddit URLs, then scrape and extract users.
+
+You can also specify the maximum number of URLs per LLM provider:
 ```bash
-python manage.py find_product_users --product "Product Name" --search-provider duckduckgo
+python manage.py find_product_users --product "Product Name" --max-urls 30
 ```
 
-Available search providers: `google`, `duckduckgo`, `bing`
-
 The command will:
-- Search for Reddit pages mentioning the product using AI
+- Search for Reddit pages mentioning the product using multiple LLMs (OpenAI, Gemini, Grok) with web search
+- Aggregate unique URLs from all LLM providers
 - Scrape each discovered Reddit page
 - Extract users who actually use the product with evidence
 - Store all data in the database
