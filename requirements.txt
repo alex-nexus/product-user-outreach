@@ -2,7 +2,7 @@ Django>=6.0,<7.0
 openai>=1.0.0
 google-generativeai>=0.3.0
 groq>=0.4.0
-pydantic-ai>=0.0.14
+pydantic-ai>=0.8.1
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
@@ -14,4 +14,3 @@ tenacity>=8.2.0
 httpx>=0.25.0
 duckduckgo-search>=6.0.0
 langchain-community>=0.0.20
-

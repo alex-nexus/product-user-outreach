@@ -71,3 +71,4 @@ dmypy.json
 
 # Pre-commit
 .pre-commit-config.yaml.bak
+certs/cacert.pem

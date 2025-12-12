@@ -1,5 +1,8 @@
+"""Utilities to scrape web pages (Reddit) via Playwright and extract text."""
+
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 import html2text
 from playwright.async_api import async_playwright
@@ -8,6 +11,8 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 @dataclass
 class WebPageScraper:
+    """Scrape and validate a web page, storing raw HTML and extracted text."""
+
     url: str
     raw_html: Optional[str] = None
     raw_text: Optional[str] = None
@@ -17,6 +22,7 @@ class WebPageScraper:
         stop=stop_after_attempt(3),
     )
     async def scrape_page_html(self) -> str:
+        """Scrape the page HTML and store it on the instance."""
         try:
             raw_html = await self._scrape_html_by_playwright()
             if self.is_valid_page(raw_html):
@@ -35,8 +41,29 @@ class WebPageScraper:
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                await page.goto(self.url, wait_until="networkidle", timeout=30000)
+                context = await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    locale="en-US",
+                )
+                page = await context.new_page()
+
+                # Reddit often blocks automation; try old.reddit.com as a fallback.
+                target_url = self.url
+                try:
+                    parsed = urlparse(target_url)
+                    host = (parsed.netloc or "").lower()
+                    if host in {"reddit.com", "www.reddit.com", "new.reddit.com"}:
+                        parsed = parsed._replace(netloc="old.reddit.com")
+                        target_url = urlunparse(parsed)
+                except Exception:
+                    # If parsing fails, just use original URL
+                    target_url = self.url
+
+                await page.goto(target_url, wait_until="networkidle", timeout=30000)
                 html = await page.content()
                 await browser.close()
                 return html
@@ -61,6 +88,18 @@ class WebPageScraper:
 
         text_lower = text.lower()
 
+        # Block/anti-bot pages (Reddit)
+        block_indicators = [
+            "you've been blocked by network security",
+            "you have been blocked by network security",
+            "support.reddithelp.com",
+            "file a ticket",
+            "blocked",
+        ]
+        first_800 = text_lower[:800]
+        if any(indicator in first_800 for indicator in block_indicators):
+            return False
+
         # For pages with substantial text (>1000 chars), trust they're valid
         # Only check for error patterns if text is relatively short
         if len(text) < 1000:
@@ -83,6 +122,7 @@ class WebPageScraper:
         return True
 
     def scrape_page_text(self) -> str:
+        """Convert stored HTML into text using html2text."""
         if not self.raw_html:
             return ""
         h = html2text.HTML2Text()
