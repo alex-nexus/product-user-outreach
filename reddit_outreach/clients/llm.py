@@ -1,6 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from typing import Optional, TypeVar, Type, Union
+from typing import Optional, TypeVar, Type, Union, List, Any
 from pydantic import BaseModel
 
 try:
@@ -8,6 +8,13 @@ try:
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.models.gemini import GeminiModel
     from pydantic_ai.models.groq import GroqModel
+    # Try to import built-in WebSearchTool
+    try:
+        from pydantic_ai import WebSearchTool
+        HAS_WEB_SEARCH_TOOL = True
+    except ImportError:
+        HAS_WEB_SEARCH_TOOL = False
+        WebSearchTool = None
 except ImportError:
     raise ImportError(
         "pydantic-ai package is required. Install with: pip install pydantic-ai"
@@ -21,16 +28,36 @@ T = TypeVar('T', bound=BaseModel)
 class BaseLLM(ABC):
     """Abstract base class for LLM clients using PydanticAI."""
     
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        tools: Optional[List[Any]] = None,
+        enable_web_search: bool = False,
+    ):
         """
         Initialize the LLM client.
         
         Args:
             api_key: API key for the LLM provider
             model: Model name to use
+            tools: Optional list of PydanticAI tools to use
+            enable_web_search: If True, enables the built-in web search tool from the LLM provider
         """
         self.api_key = api_key
         self.model = model
+        self.tools = tools or []
+        
+        # Add built-in web search tool if enabled
+        if enable_web_search:
+            if not HAS_WEB_SEARCH_TOOL:
+                raise ImportError(
+                    "PydanticAI's WebSearchTool is not available. "
+                    "This tool uses the LLM provider's built-in web search capabilities. "
+                    "Please ensure you have the latest version of pydantic-ai installed."
+                )
+            self.tools.append(WebSearchTool())
+        
         self._client = self._initialize_client()
     
     @abstractmethod
@@ -44,6 +71,7 @@ class BaseLLM(ABC):
         prompt: str,
         system_prompt: Optional[str] = None,
         output_type: Optional[Type[T]] = None,
+        tools: Optional[List[Any]] = None,
         **kwargs
     ) -> Union[T, str]:
         """
@@ -53,6 +81,7 @@ class BaseLLM(ABC):
             prompt: User prompt
             system_prompt: Optional system prompt
             output_type: Optional Pydantic model class for structured output
+            tools: Optional list of tools to use for this call (overrides instance tools)
             **kwargs: Additional arguments for the model
         
         Returns:
@@ -70,6 +99,8 @@ class OpenAILLM(BaseLLM):
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        tools: Optional[List[Any]] = None,
+        enable_web_search: bool = False,
     ):
         """
         Initialize OpenAI LLM client.
@@ -77,6 +108,8 @@ class OpenAILLM(BaseLLM):
         Args:
             api_key: OpenAI API key (defaults to OPENAI_API_KEY from settings)
             model: Model name (defaults to gpt-4)
+            tools: Optional list of PydanticAI tools to use
+            enable_web_search: If True, enables OpenAI's built-in web search tool
         """
         self.api_key = api_key or getattr(settings, 'OPENAI_API_KEY', None) or os.getenv('OPENAI_API_KEY')
         self.model = model or self.DEFAULT_MODEL
@@ -84,7 +117,12 @@ class OpenAILLM(BaseLLM):
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY is required")
         
-        super().__init__(api_key=self.api_key, model=self.model)
+        super().__init__(
+            api_key=self.api_key,
+            model=self.model,
+            tools=tools,
+            enable_web_search=enable_web_search,
+        )
     
     def _initialize_client(self) -> ModelClient:
         """Initialize OpenAI ModelClient."""
@@ -98,6 +136,7 @@ class OpenAILLM(BaseLLM):
         prompt: str,
         system_prompt: Optional[str] = None,
         output_type: Optional[Type[T]] = None,
+        tools: Optional[List[Any]] = None,
         **kwargs
     ) -> Union[T, str]:
         """
@@ -107,15 +146,20 @@ class OpenAILLM(BaseLLM):
             prompt: User prompt
             system_prompt: Optional system prompt
             output_type: Optional Pydantic model class for structured output
+            tools: Optional list of tools to use for this call (overrides instance tools)
             **kwargs: Additional arguments (temperature, max_tokens, etc.)
         
         Returns:
             Structured output if output_type is provided, otherwise string
         """
+        # Use provided tools or fall back to instance tools
+        tools_to_use = tools if tools is not None else self.tools
+        
         agent = Agent(
             self._client,
             system_prompt=system_prompt,
             result_type=output_type,
+            tools=tools_to_use if tools_to_use else None,
         )
         
         result = await agent.run(prompt, **kwargs)
@@ -134,6 +178,8 @@ class GeminiLLM(BaseLLM):
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        tools: Optional[List[Any]] = None,
+        enable_web_search: bool = False,
     ):
         """
         Initialize Gemini LLM client.
@@ -141,6 +187,8 @@ class GeminiLLM(BaseLLM):
         Args:
             api_key: Google API key (defaults to GEMINI_API_KEY or GOOGLE_API_KEY from settings)
             model: Model name (defaults to gemini-pro)
+            tools: Optional list of PydanticAI tools to use
+            enable_web_search: If True, enables Gemini's built-in web search tool
         """
         self.api_key = (
             api_key 
@@ -154,7 +202,12 @@ class GeminiLLM(BaseLLM):
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is required")
         
-        super().__init__(api_key=self.api_key, model=self.model)
+        super().__init__(
+            api_key=self.api_key,
+            model=self.model,
+            tools=tools,
+            enable_web_search=enable_web_search,
+        )
     
     def _initialize_client(self) -> ModelClient:
         """Initialize Gemini ModelClient."""
@@ -168,6 +221,7 @@ class GeminiLLM(BaseLLM):
         prompt: str,
         system_prompt: Optional[str] = None,
         output_type: Optional[Type[T]] = None,
+        tools: Optional[List[Any]] = None,
         **kwargs
     ) -> Union[T, str]:
         """
@@ -177,15 +231,20 @@ class GeminiLLM(BaseLLM):
             prompt: User prompt
             system_prompt: Optional system prompt
             output_type: Optional Pydantic model class for structured output
+            tools: Optional list of tools to use for this call (overrides instance tools)
             **kwargs: Additional arguments (temperature, max_tokens, etc.)
         
         Returns:
             Structured output if output_type is provided, otherwise string
         """
+        # Use provided tools or fall back to instance tools
+        tools_to_use = tools if tools is not None else self.tools
+        
         agent = Agent(
             self._client,
             system_prompt=system_prompt,
             result_type=output_type,
+            tools=tools_to_use if tools_to_use else None,
         )
         
         result = await agent.run(prompt, **kwargs)
@@ -204,6 +263,8 @@ class GrokLLM(BaseLLM):
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        tools: Optional[List[Any]] = None,
+        enable_web_search: bool = False,
     ):
         """
         Initialize Grok LLM client.
@@ -211,6 +272,8 @@ class GrokLLM(BaseLLM):
         Args:
             api_key: Groq API key (defaults to GROK_API_KEY or GROQ_API_KEY from settings)
             model: Model name (defaults to llama-3.1-70b-versatile)
+            tools: Optional list of PydanticAI tools to use
+            enable_web_search: If True, enables the built-in web search tool (if supported by the model)
         """
         self.api_key = (
             api_key 
@@ -224,7 +287,12 @@ class GrokLLM(BaseLLM):
         if not self.api_key:
             raise ValueError("GROK_API_KEY or GROQ_API_KEY is required")
         
-        super().__init__(api_key=self.api_key, model=self.model)
+        super().__init__(
+            api_key=self.api_key,
+            model=self.model,
+            tools=tools,
+            enable_web_search=enable_web_search,
+        )
     
     def _initialize_client(self) -> ModelClient:
         """Initialize Groq ModelClient."""
@@ -238,6 +306,7 @@ class GrokLLM(BaseLLM):
         prompt: str,
         system_prompt: Optional[str] = None,
         output_type: Optional[Type[T]] = None,
+        tools: Optional[List[Any]] = None,
         **kwargs
     ) -> Union[T, str]:
         """
@@ -247,15 +316,20 @@ class GrokLLM(BaseLLM):
             prompt: User prompt
             system_prompt: Optional system prompt
             output_type: Optional Pydantic model class for structured output
+            tools: Optional list of tools to use for this call (overrides instance tools)
             **kwargs: Additional arguments (temperature, max_tokens, etc.)
         
         Returns:
             Structured output if output_type is provided, otherwise string
         """
+        # Use provided tools or fall back to instance tools
+        tools_to_use = tools if tools is not None else self.tools
+        
         agent = Agent(
             self._client,
             system_prompt=system_prompt,
             result_type=output_type,
+            tools=tools_to_use if tools_to_use else None,
         )
         
         result = await agent.run(prompt, **kwargs)
