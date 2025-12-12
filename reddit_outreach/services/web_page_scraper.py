@@ -6,7 +6,7 @@ from urllib.parse import urlparse, urlunparse
 
 import html2text
 from playwright.async_api import async_playwright
-from tenacity import retry, stop_after_attempt, wait_random_exponential
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_random_exponential
 
 
 @dataclass
@@ -18,8 +18,9 @@ class WebPageScraper:
     raw_text: Optional[str] = None
 
     @retry(
-        wait=wait_random_exponential(multiplier=1, min=4, max=10),
-        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(multiplier=1, min=5, max=60),
+        stop=stop_after_attempt(6),
+        retry=retry_if_result(lambda result: result == ""),
     )
     async def scrape_page_html(self) -> str:
         """Scrape the page HTML and store it on the instance."""
@@ -63,7 +64,17 @@ class WebPageScraper:
                     # If parsing fails, just use original URL
                     target_url = self.url
 
-                await page.goto(target_url, wait_until="networkidle", timeout=30000)
+                resp = await page.goto(
+                    target_url,
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+                # Only accept successful pages. Reddit frequently rate-limits
+                # automated traffic (429), and missing pages may return 404/403.
+                # In those cases, return empty string to trigger retry/backoff.
+                if resp is not None and resp.status != 200:
+                    await browser.close()
+                    return ""
                 html = await page.content()
                 await browser.close()
                 return html

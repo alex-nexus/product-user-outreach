@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 import re
 from dataclasses import dataclass, field
 from typing import List
@@ -41,9 +42,10 @@ class ProductPageFinder:
     def __post_init__(self):
         """Initialize the LLM client after dataclass initialization."""
         self.llm_option = self.llm_option.lower()
+        enable_web_search = self.llm_option in {"openai", "gemini"}
         self.llm = create_llm_client(
             provider=self.llm_option,
-            enable_web_search=True,
+            enable_web_search=enable_web_search,
         )
         # Use OpenAI classifier by default (no web search)
         self.classifier = ProductPageClassifier(
@@ -145,8 +147,13 @@ class ProductPageFinder:
                         response2_text[:400],
                     )
 
-            # Limit to max_results
-            urls = urls[:max_results]
+            # Normalize + dedupe, then limit.
+            normalized_urls: List[str] = []
+            for u in urls:
+                nu = self.product_page_service.normalize_url(u)
+                if nu and nu not in normalized_urls:
+                    normalized_urls.append(nu)
+            urls = normalized_urls[:max_results]
 
             logger.info(
                 "Found %s candidate Reddit URLs for %s using %s; "
@@ -156,11 +163,13 @@ class ProductPageFinder:
                 self.llm_option,
             )
 
-            # Limit concurrent scraping to avoid overwhelming Playwright
-            sem = asyncio.Semaphore(4)
+            # Limit concurrent scraping to reduce Reddit rate-limiting (429).
+            sem = asyncio.Semaphore(1)
 
             async def run_one(u: str):
                 async with sem:
+                    # Slow down a bit to reduce Reddit 429s.
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
                     return await self._scrape_classify_and_save_product_page(
                         product_obj, u
                     )
@@ -227,14 +236,16 @@ class ProductPageFinder:
             if html and scraper.is_valid_page(html):
                 text = scraper.scrape_page_text()
 
-                relevance = await self.classifier.classify(url=url, page_text=text)
-                if not relevance.relevant:
-                    logger.info(
-                        "Skipping irrelevant page: %s (confidence=%.2f)",
-                        url,
-                        relevance.confidence,
-                    )
-                    return None
+                # Fast path: heuristic relevance check (avoids extra LLM calls).
+                if not self._is_relevant_heuristic(url=url, page_text=text):
+                    relevance = await self.classifier.classify(url=url, page_text=text)
+                    if not relevance.relevant:
+                        logger.info(
+                            "Skipping irrelevant page: %s (confidence=%.2f)",
+                            url,
+                            relevance.confidence,
+                        )
+                        return None
 
                 def _create_scraped():
                     return self.product_page_service.create(
@@ -291,3 +302,36 @@ class ProductPageFinder:
                 urls.append(url)
 
         return urls
+
+    def _is_relevant_heuristic(self, *, url: str, page_text: str) -> bool:
+        """
+        Check relevance without an LLM call.
+
+        We treat a page as relevant if the product name (or a normalized variant)
+        appears in either the URL or the scraped text.
+        """
+        product_raw = (self.product or "").strip().lower()
+        if not product_raw:
+            return False
+
+        # Normalize: remove non-alphanumeric characters (e.g. fyxer.ai -> fyxerai).
+        product_norm = re.sub(r"[^a-z0-9]+", "", product_raw)
+
+        # Also try base token (e.g. fyxer.ai -> fyxer).
+        base_tokens = re.sub(r"[^a-z0-9]+", " ", product_raw).split()
+        product_base = base_tokens[0] if base_tokens else ""
+
+        candidates = {product_raw, product_norm}
+        if product_base:
+            candidates.add(product_base)
+
+        hay_url = (url or "").lower()
+        hay_text = (page_text or "").lower()
+
+        for token in candidates:
+            token = token.strip()
+            if len(token) < 4:
+                continue
+            if token in hay_url or token in hay_text:
+                return True
+        return False

@@ -113,7 +113,9 @@ class OpenAILLM(BaseLLM):
 class GeminiLLM(BaseLLM):
     """Google Gemini via PydanticAI."""
 
-    DEFAULT_MODEL = "gemini-1.5-flash"
+    # Must be a model supported by the Generative Language API `generateContent`
+    # endpoint for the configured API key/project.
+    DEFAULT_MODEL = "gemini-flash-latest"
 
     def __init__(
         self,
