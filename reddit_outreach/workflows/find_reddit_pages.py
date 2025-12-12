@@ -1,38 +1,38 @@
 import asyncio
 import logging
 from reddit_outreach.agents.product_page_finder import ProductPageFinder
-from reddit_outreach.agents.product_user_extractor import ProductUserExtractor
 from reddit_outreach.services.web_page_scraper import WebPageScraper
 from reddit_outreach.services.product_service import ProductService
 from reddit_outreach.services.product_page_service import ProductPageService
-from reddit_outreach.services.product_user_service import ProductUserService
 
 logger = logging.getLogger(__name__)
 
 
-class FindProductUsersWorkflow:
+class FindRedditPagesWorkflow:
+    """Workflow to find and scrape Reddit pages for a given product."""
+    
     def __init__(self):
         """
         Initialize the workflow.
         """
         self.llm_providers = ['openai', 'gemini', 'grok']
-        self.user_extractor = ProductUserExtractor()
         self.product_service = ProductService()
         self.product_page_service = ProductPageService()
-        self.product_user_service = ProductUserService()
-
-    def execute(self, product_name, max_urls=20):
+    
+    def execute(self, product_name: str, max_urls: int = 20):
         """
         Main entry point for the workflow.
         
+        Given a product, find all Reddit pages where it's discussed.
+        
         Args:
-            product_name: Name of the product to find users for
+            product_name: Name of the product to find Reddit pages for
             max_urls: Maximum number of Reddit URLs to search for
             
         Returns:
             dict with summary of results
         """
-        logger.info(f"Starting workflow for product: {product_name}")
+        logger.info(f"Starting workflow to find Reddit pages for product: {product_name}")
         
         # Get or create product
         product, created = self.product_service.get_or_create(product_name)
@@ -48,7 +48,6 @@ class FindProductUsersWorkflow:
                 'product': product,
                 'urls_found': 0,
                 'pages_scraped': 0,
-                'users_extracted': 0,
                 'success': False,
                 'message': 'No Reddit URLs found'
             }
@@ -65,32 +64,22 @@ class FindProductUsersWorkflow:
                 'product': product,
                 'urls_found': len(reddit_urls),
                 'pages_scraped': 0,
-                'users_extracted': 0,
                 'success': False,
                 'message': 'No pages successfully scraped'
             }
         
         logger.info(f"Successfully scraped {len(scraped_pages)} pages")
         
-        # Step 3: Extract users from each page
-        logger.info("Step 3: Extracting users from pages...")
-        total_users = 0
-        for page in scraped_pages:
-            users_count = self._extract_users(product_name, page)
-            total_users += users_count
-        
-        logger.info(f"Extracted {total_users} total users")
-        
         return {
             'product': product,
             'urls_found': len(reddit_urls),
             'pages_scraped': len(scraped_pages),
-            'users_extracted': total_users,
+            'pages': scraped_pages,
             'success': True,
-            'message': f'Successfully processed {len(scraped_pages)} pages and extracted {total_users} users'
+            'message': f'Successfully found and scraped {len(scraped_pages)} Reddit pages'
         }
-
-    def _search_reddit_pages_all_llms(self, product_name, max_urls=20):
+    
+    def _search_reddit_pages_all_llms(self, product_name: str, max_urls: int = 20):
         """
         Search for Reddit pages using all LLM providers and aggregate results.
         
@@ -139,8 +128,8 @@ class FindProductUsersWorkflow:
             logger.warning(f"Failed to use {len(failed_providers)} LLM provider(s): {', '.join(failed_providers)}")
         
         return list(all_urls)
-
-    async def _scrape_single_page(self, product, url):
+    
+    async def _scrape_single_page(self, product, url: str):
         """Scrape a single Reddit URL and return the ProductPage or None."""
         try:
             logger.info(f"Scraping: {url}")
@@ -204,8 +193,8 @@ class FindProductUsersWorkflow:
             except Exception:
                 pass
             return None
-
-    def _scrape_pages_async(self, product, urls):
+    
+    def _scrape_pages_async(self, product, urls: list):
         """Scrape each Reddit URL and store in database (async)."""
         try:
             loop = asyncio.get_event_loop()
@@ -227,31 +216,4 @@ class FindProductUsersWorkflow:
             return scraped_pages
         
         return loop.run_until_complete(scrape_all())
-
-    def _extract_users(self, product_name, product_page):
-        """Extract users from a scraped page."""
-        try:
-            # Use text content for extraction (more efficient than HTML)
-            content = product_page.scraped_text or product_page.scraped_html
-            
-            if not content:
-                logger.warning(f"No content available for page: {product_page.url}")
-                return 0
-            
-            # Extract users using extractor
-            users = self.user_extractor.extract_users(product_name, content)
-            
-            if not users:
-                logger.info(f"No users extracted from: {product_page.url}")
-                return 0
-            
-            # Store users in database
-            created_count = self.product_user_service.bulk_create_users(product_page, users)
-            
-            logger.info(f"Extracted {created_count} users from: {product_page.url}")
-            return created_count
-            
-        except Exception as e:
-            logger.error(f"Error extracting users from {product_page.url}: {e}")
-            return 0
 

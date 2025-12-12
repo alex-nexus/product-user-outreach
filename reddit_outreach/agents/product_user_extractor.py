@@ -7,7 +7,7 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-class UserExtractionAgent:
+class ProductUserExtractor:
     def __init__(self):
         api_key = getattr(settings, 'OPENAI_API_KEY', '')
         if not api_key:
